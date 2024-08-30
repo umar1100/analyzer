@@ -10,7 +10,7 @@ import requests
 import json
 import streamlit as st
 
-
+print('start')
 #load_dotenv()
 
 news_api_key = "2b4fff9ec9854806a3d24574b2d64b39"
