@@ -215,16 +215,9 @@ class AssistantManager:
             )
             print("The file id is: ", self.file.id)
             
-            ## Step 2: Update the assistant with the new file
-            #if self.assistant:
-            #    # Assuming you have a method to update the assistant configuration or context
-            #    self.client.assistants.update(
-            #        assistant_id=self.assistant.id,
-            #        tool_resources={"code_interpreter": {
-            #            "file_ids": [self.file.id]
-            #        }}
-            #    )
-            #    print(f"File with ID {file.id} attached to assistant with ID {self.assistant.id}")
+            client.beta.threads.update(thread_id=self.thread.id,tool_resources={"code_interpreter": {
+                        "file_ids": [self.file.id]
+                    }})
 
 
 
