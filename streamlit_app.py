@@ -554,15 +554,15 @@ def main():
                 if st.session_state.last_action == "Run User Query" and instructions:
                     st.session_state.summary = process_request(instructions)
                 elif st.session_state.last_action == "Data Summary":
-                    st.session_state.summary = process_request("Provide a summary of the data")
+                    st.session_state.summary = process_request("Provide a summary of the data that is uploaded")
                 elif st.session_state.last_action == "Optimizer":
-                    st.session_state.summary = process_request("Optimize the data")
+                    st.session_state.summary = process_request("Optimize the data from the uploaded data")
                 elif st.session_state.last_action == "Work Forecast":
-                    st.session_state.summary = process_request("Forecast the work based on data")
+                    st.session_state.summary = process_request("Forecast the work based on data that is uploaded")
                 elif st.session_state.last_action == "Negotiator":
-                    st.session_state.summary = process_request("Provide negotiation strategies based on data")
+                    st.session_state.summary = process_request("Provide negotiation strategies based on data that is uploaded")
                 elif st.session_state.last_action == "Opportunities":
-                    st.session_state.summary = process_request("Identify opportunities in the data")
+                    st.session_state.summary = process_request("Identify opportunities in the data that is uploaded")
                 
                 st.session_state.processing = False
 
