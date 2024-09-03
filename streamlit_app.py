@@ -1,7 +1,7 @@
 import openai
-#import pyodbc
+import pyodbc
 import os
-#from dotenv import find_dotenv, load_dotenv
+from dotenv import find_dotenv, load_dotenv
 import time
 import logging
 import pandas as pd
@@ -9,13 +9,12 @@ from datetime import datetime
 import requests
 import json
 import streamlit as st
+import requests
 
-print('start')
-#load_dotenv()
 
-news_api_key = "2b4fff9ec9854806a3d24574b2d64b39"
+news_api_key = st.secrets["news_api_key"]
 
-client = openai.OpenAI(api_key="sk-oIovQpqLTCEPwyExB5rbeDHew_H2xpO1ppS64vTHuyT3BlbkFJhYL7jafNcV6CwW66JyurX8mQ-4JaS2WxHivByhtT0A")
+client = openai.OpenAI(api_key=st.secrets["open_api_key"],)
 model = "gpt-4o-mini"
 
 
@@ -66,7 +65,7 @@ def get_news(topic):
 # Function to get weather information
 def get_weather(city):
     # Replace with your actual weather API key
-    weather_api_key = "5e407da2ae138dd42074bf8d12617aad"
+    weather_api_key = st.secrets["weather_api_key"]
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={weather_api_key}&units=metric"
 
     try:
@@ -105,10 +104,49 @@ def get_weather(city):
 
 
 
+def google_search(query):
+    url = "https://google-api31.p.rapidapi.com/websearch"
+    headers = {
+        "x-rapidapi-key": st.secrets["x-rapidapi-key"],
+        "x-rapidapi-host": "google-api31.p.rapidapi.com",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text": query,
+        "safesearch": "off",
+        "timelimit": "",
+        "region": "wt-wt",
+        "max_results": 5
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()  # Raise an error for bad status codes
+        results = response.json()
+
+        # Check if the 'result' key exists
+        if 'result' in results:
+            output = []
+            for result in results['result'][:5]:
+                title = result.get('title')
+                link = result.get('href')
+                snippet = result.get('body')
+                output.append(f"Title: {title}\nLink: {link}\nSnippet: {snippet}\n")
+            return '\n'.join(output)
+        else:
+            return "No results found."
+            
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return "Error: Unable to fetch search results."
+
+
+
 class AssistantManager:
     _instance = None  # Class-level attribute to hold the single instance
     thread_id = None
-    assistant_id = "asst_q4C9apv9tnQuM7XwCDC3u3Ba"
+    assistant_id = st.secrets["assistant_id"]
+    file = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -123,10 +161,10 @@ class AssistantManager:
             self.thread = None
             self.run = None
             self.summary = None
+            self.file = None
             if not AssistantManager.thread_id:
-                self.create_thread() # Creating a thread each time a program is run
+                self.create_thread()  # Creating a thread each time a program is run
                 print(f"ThreadID initialized::: {self.thread.id}")
-            
 
             # Retrieve existing assistant and thread if IDs are already set
             if AssistantManager.assistant_id:
@@ -142,7 +180,7 @@ class AssistantManager:
     def create_assistant(self, name, instructions, tools, tool_resources):
         if not self.assistant:
             assistant_obj = self.client.beta.assistants.create(
-                name=name, instructions=instructions, tools=tools, model=self.model, tool_resources= tool_resources
+                name=name, instructions=instructions, tools=tools, model=self.model, tool_resources=tool_resources
             )
             AssistantManager.assistant_id = assistant_obj.id
             self.assistant = assistant_obj
@@ -153,6 +191,7 @@ class AssistantManager:
             thread_obj = self.client.beta.threads.create()
             AssistantManager.thread_id = thread_obj.id
             self.thread = thread_obj
+            print(f"Created new thread with ID: {self.thread.id}")
 
     def add_message_to_thread(self, role, content):
         if self.thread:
@@ -169,18 +208,32 @@ class AssistantManager:
             )
 
     def upload_file(self):
-        if self.thread and self.assistant:
-            file = client.files.create(
-            file=open("data1.txt", "rb"),
-            purpose='assistants'
+        if self.assistant:
+            # Step 1: Upload the new file
+            self.file = client.files.create(
+                file=open("data1.txt", "rb"),
+                purpose='assistants'
             )
-            print("The file id is : ", file.id)
-            openai.beta.assistants.files.create(self.assistant.id, {
-            "file_ids": [file.id],
-        })
+            print("The file id is: ", self.file.id)
+            
+            ## Step 2: Update the assistant with the new file
+            #if self.assistant:
+            #    # Assuming you have a method to update the assistant configuration or context
+            #    self.client.assistants.update(
+            #        assistant_id=self.assistant.id,
+            #        tool_resources={"code_interpreter": {
+            #            "file_ids": [self.file.id]
+            #        }}
+            #    )
+            #    print(f"File with ID {file.id} attached to assistant with ID {self.assistant.id}")
+
+
 
     def process_message(self):
         if self.thread:
+            client.beta.threads.update(thread_id=self.thread.id,tool_resources={"code_interpreter": {
+                        "file_ids": [self.file.id]
+                    }})
             messages = self.client.beta.threads.messages.list(thread_id=self.thread.id)
             summary = []
 
@@ -191,8 +244,6 @@ class AssistantManager:
 
             self.summary = "\n".join(summary)
             print(f"SUMMARY-----> {role.capitalize()}: ==> {response}")
-
-
 
     def call_required_functions(self, required_actions):
         if not self.run:
@@ -212,7 +263,9 @@ class AssistantManager:
             elif func_name == "get_weather":
                 output = get_weather(city=arguments.get("city", ""))
                 tool_outputs.append({"tool_call_id": action["id"], "output": output})
-
+            elif func_name == "google_search":
+                output = google_search(query=arguments.get("query", ""))
+                tool_outputs.append({"tool_call_id": action["id"], "output": output})
 
         # Ensure all tool calls are addressed
         for tool_call_id in tool_call_ids:
@@ -227,7 +280,6 @@ class AssistantManager:
                 )
             except openai.OpenAIError as e:
                 print(f"Error submitting tool outputs: {e}")
-
 
     # for streamlit
     def get_summary(self):
@@ -257,8 +309,6 @@ class AssistantManager:
                         self.process_message()
                         break
 
-
-
     # Run the steps
     def run_steps(self):
         run_steps = self.client.beta.threads.runs.steps.list(
@@ -267,79 +317,159 @@ class AssistantManager:
         print(f"Run-Steps::: {run_steps}")
         return run_steps.data
 
-# New Function to Connect to SQL and Fetch Data
+
 def fetch_sql_data():
-    #Server Parameters
-    server = 'ips-bi.database.windows.net'
-    database = 'SMG_BI'
-    username = 'IPS_Admin'
-    password = 'KdnLx@Xz5LjBT6T'
+    """Fetch data from SQL and create a new file."""
+    # Server Parameters
+    server = st.secrets["server"]
+    database = st.secrets["database"]
+    username = st.secrets["username"]
+    password = st.secrets["password"]
 
-    #Connecting to Database
-    cnxn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER='+server+';DATABASE='+database+';ENCRYPT=yes;UID='+username+';PWD='+ password)
+    # Connecting to Database
+    cnxn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER='+server+';DATABASE='+database+';ENCRYPT=yes;UID='+username+';PWD='+password)
 
-    #Reading the database
+    # Reading the database
     df = pd.read_sql("SELECT o.ordnum,o.clientid,o.invdate,o.ordertype,o.category,o.priority,o.dne,o.status,o.invtotal,o.tax,o.taxrate,o.billcompany,o.billcity,o.billstate,p.VendorCost,p.Profit,p.Perc FROM [dbo].[BI_Orders_DT_View] As o  JOIN [dbo].[BI_OrderProfit_DT] AS p ON o.Ordnum = p.Ordnum", cnxn)
     print("The number of data rows are: ", len(df))
     df.to_csv('data1.txt', sep=',', index=False)
 
-    return 
+def manage_files(api_key, new_file_path):
+    """Delete old files and upload the new file."""
+    # API endpoints
+    list_files_url = "https://api.openai.com/v1/files"
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    # Step 1: Get the list of files
+    response = requests.get(list_files_url, headers=headers)
+    if response.status_code == 200:
+        file_list = response.json().get("data", [])
+        print(f"Found {len(file_list)} files.")
+
+        # Step 2: Filter files with purpose "assistants" and delete them
+        for file_info in file_list:
+            file_id = file_info.get("id")
+            file_purpose = file_info.get('purpose')
+            # Delete files only with the purpose "assistants"
+            if file_id and file_purpose == "assistants":
+                delete_url = f"{list_files_url}/{file_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code == 204:
+                    print(f"Deleted file with ID: {file_id}")
+                else:
+                    print(f"Failed to delete file with ID: {file_id}, Status Code: {delete_response.status_code}")
+
+        # Step 3: Upload a new file
+        upload_url = "https://api.openai.com/v1/files"
+        with open(new_file_path, 'rb') as file_to_upload:
+            files = {
+                "file": (new_file_path, file_to_upload, "text/plain"),
+            }
+            data = {
+                "purpose": "assistants"  # Set the purpose to "assistants"
+            }
+            upload_response = requests.post(upload_url, headers=headers, files=files, data=data)
+            
+            if upload_response.status_code == 200:
+                uploaded_file = upload_response.json()
+                print(f"Uploaded new file with ID: {uploaded_file['id']}")
+                return uploaded_file['id']
+            else:
+                print(f"Failed to upload file, Status Code: {upload_response.status_code} - {upload_response.text}")
+                return None
+    else:
+        print(f"Failed to retrieve file list, Status Code: {response.status_code}")
+        return None
 
 def initialize_manager():
     """Initialize the AssistantManager and create an assistant if not already done."""
     if 'manager' not in st.session_state:
         st.session_state.manager = AssistantManager()
 
-        if st.session_state.manager.assistant is None:
-            st.session_state.manager.create_assistant(
-                name="News, Weather and Data Analyzer",
-                instructions="""
-                You are a personal assistant capable of summarizing news articles, providing weather information for any city, and analyzing data from provided files.
-                When using the code interpreter, load the data from the provided files and process it according to the user's query.
-                """,
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "get_news",
-                            "description": "Get the list of articles/news for the given topic",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "topic": {
-                                        "type": "string",
-                                        "description": "The topic for the news, e.g. bitcoin",
-                                    }
+        # Fetch latest data and create a new file
+        fetch_sql_data()
+
+        # Manage files: delete old files and upload the new one
+        api_key = st.secrets["open_api_key"]
+        new_file_path = "data1.txt"
+        file_id = manage_files(api_key, new_file_path)
+        
+        # Create or update the assistant with the new file
+        if file_id:
+            if st.session_state.manager.assistant is None:
+                st.session_state.manager.create_assistant(
+                    name="News, Weather, real time information and Data Analyzer",
+                    instructions="""
+                    You are a personal assistant capable of summarizing news articles, providing weather information for any city, getting real-time information, and analyzing data from provided files.
+                    When using the code interpreter, load the data from the provided files and process it according to the user's query.
+                    """,
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "get_news",
+                                "description": "Get the list of articles/news for the given topic",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "topic": {
+                                            "type": "string",
+                                            "description": "The topic for the news, e.g. bitcoin",
+                                        }
+                                    },
+                                    "required": ["topic"],
                                 },
-                                "required": ["topic"],
                             },
                         },
-                    },
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "description": "Get the current weather information for the given city",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "city": {
-                                        "type": "string",
-                                        "description": "The name of the city for which to retrieve the weather, e.g., Calgary",
-                                    }
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "description": "Get the current weather information for the given city",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The name of the city for which to retrieve the weather, e.g., Calgary",
+                                        }
+                                    },
+                                    "required": ["city"],
                                 },
-                                "required": ["city"],
                             },
                         },
-                    },
-                    {
-                        "type": "code_interpreter"
-                    }
-                ],
-                tool_resources={"code_interpreter": {
-                    "file_ids": ["file-fQhHTukUFHJfpc1KYsxToBXc"]
-                }}
-            )
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "google_search",
+                                "description": "Get search results for the given query including current information required",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "description": "The search query, e.g., 'Python programming language'"
+                                        }
+                                    },
+                                    "required": ["query"]
+                                }
+                            }
+                        },
+                        {
+                            "type": "code_interpreter"
+                        }
+                    ],
+                    tool_resources={"code_interpreter": {
+                        "file_ids": [file_id]
+                    }}
+                )
+            else:
+                # If assistant exists, upload file and attach to the thread
+                st.session_state.manager.upload_file()
+
+
 
 def process_request(instructions):
     """Helper function to process the request with the assistant."""
@@ -366,52 +496,81 @@ def main():
     with st.form(key="user_input_form"):
         instructions = st.text_input("Enter Instructions:")
 
-        # Button Columns for better layout
-        col1, col2, col3 = st.columns(3)
-        submit_button = col1.form_submit_button(
-            label="Run User Query", 
-            disabled=st.session_state.buttons_disabled
-        )
-        analysis_button = col2.form_submit_button(
-            label="Data Summary", 
-            disabled=st.session_state.buttons_disabled
-        )
-        optimizer_button = col3.form_submit_button(
-            label="Optimizer", 
-            disabled=st.session_state.buttons_disabled
-        )
+        # Layout with 2 rows of 3 buttons each
+        row1_col1, row1_col2, row1_col3 = st.columns(3)
+        row2_col1, row2_col2, row2_col3 = st.columns(3)
 
-        if submit_button or analysis_button or optimizer_button:
+        # First row with 3 buttons
+        with row1_col1:
+            optimizer_button = st.form_submit_button(
+                label="Optimizer", 
+                disabled=st.session_state.buttons_disabled
+            )
+        with row1_col2:
+            analysis_button = st.form_submit_button(
+                label="Data Summary", 
+                disabled=st.session_state.buttons_disabled
+            )
+        with row1_col3:
+            submit_button = st.form_submit_button(
+                label="Run User Query", 
+                disabled=st.session_state.buttons_disabled
+            )
+
+        # Second row with 3 buttons
+        with row2_col1:
+            Work_Forecast = st.form_submit_button(
+                label="Work Forecast", 
+                disabled=st.session_state.buttons_disabled
+            )
+        with row2_col2:
+            Negotiator = st.form_submit_button(
+                label="Negotiator", 
+                disabled=st.session_state.buttons_disabled
+            )
+        with row2_col3:
+            Opportunities = st.form_submit_button(
+                label="Opportunities", 
+                disabled=st.session_state.buttons_disabled
+            )
+
+        if any([submit_button, analysis_button, optimizer_button, Work_Forecast, Negotiator, Opportunities]):
             if not st.session_state.processing:
-                # Disable all buttons while processing
-                st.session_state.buttons_disabled = True
                 st.session_state.processing = True
-
-                # Determine which button was pressed
+                # Determine which button was clicked
                 if submit_button:
-                    st.session_state.last_action = "submit"
-                    st.session_state.summary = process_request(f"{instructions}?")
-                    
-                
+                    st.session_state.last_action = "Run User Query"
                 elif analysis_button:
-                    st.session_state.last_action = "analysis"
-                    st.session_state.summary = process_request("Summarize the given data available to you")
-
+                    st.session_state.last_action = "Data Summary"
                 elif optimizer_button:
-                    st.session_state.last_action = "optimizer"
-                    st.session_state.summary = process_request(
-                        "Look at vendors that receive a large amount of revenue from this company, give me some options for negotiating lower rates with them"
-                    )
+                    st.session_state.last_action = "Optimizer"
+                elif Work_Forecast:
+                    st.session_state.last_action = "Work Forecast"
+                elif Negotiator:
+                    st.session_state.last_action = "Negotiator"
+                elif Opportunities:
+                    st.session_state.last_action = "Opportunities"
+
+                # Handle button clicks
+                if st.session_state.last_action == "Run User Query" and instructions:
+                    st.session_state.summary = process_request(instructions)
+                elif st.session_state.last_action == "Data Summary":
+                    st.session_state.summary = process_request("Provide a summary of the data")
+                elif st.session_state.last_action == "Optimizer":
+                    st.session_state.summary = process_request("Optimize the data")
+                elif st.session_state.last_action == "Work Forecast":
+                    st.session_state.summary = process_request("Forecast the work based on data")
+                elif st.session_state.last_action == "Negotiator":
+                    st.session_state.summary = process_request("Provide negotiation strategies based on data")
+                elif st.session_state.last_action == "Opportunities":
+                    st.session_state.summary = process_request("Identify opportunities in the data")
                 
-                # Re-enable buttons and reset processing flag after processing
-                st.session_state.buttons_disabled = False
                 st.session_state.processing = False
 
-        # Display the summary if available
-        if st.session_state.summary:
-            st.write(st.session_state.summary)
-            # Reset the summary after displaying it
-            st.session_state.summary = None
+    # Display the results
+    if st.session_state.summary:
+        st.subheader("Summary:")
+        st.write(st.session_state.summary)
 
 if __name__ == "__main__":
     main()
