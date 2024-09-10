@@ -360,7 +360,7 @@ def manage_files(api_key, new_file_path):
                 file_created_time = datetime.fromtimestamp(file_created_at, tz=timezone.utc)
                 print('file creation time: ', file_created_time)
                 # Check if the file is older than 10 hours
-                if now - file_created_time > timedelta(hours=10):
+                if now - file_created_time > timedelta(hours=1):
                     delete_url = f"{list_files_url}/{file_id}"
                     delete_response = requests.delete(delete_url, headers=headers)
                     print('Delete URL', delete_url)
