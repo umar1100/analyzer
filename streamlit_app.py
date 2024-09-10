@@ -1,6 +1,7 @@
 import openai
 import pyodbc
 import os
+from dotenv import find_dotenv, load_dotenv
 import time
 import logging
 import pandas as pd
@@ -9,7 +10,11 @@ import requests
 import json
 import streamlit as st
 import requests
+import requests
+from datetime import datetime, timedelta
 
+
+load_dotenv()
 
 news_api_key = st.secrets["news_api_key"]
 
@@ -145,7 +150,7 @@ class AssistantManager:
     _instance = None  # Class-level attribute to hold the single instance
     thread_id = None
     assistant_id = st.secrets["assistant_id"]
-    file = None
+
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -153,28 +158,23 @@ class AssistantManager:
         return cls._instance
 
     def __init__(self, model: str = model):
-        if not hasattr(self, "initialized"):  # Check if the instance is already initialized
+        if not hasattr(self, "initialized"):
             self.client = client
             self.model = model
             self.assistant = None
             self.thread = None
             self.run = None
             self.summary = None
-            self.file = None
-            if not AssistantManager.thread_id:
-                self.create_thread()  # Creating a thread each time a program is run
-                print(f"ThreadID initialized::: {self.thread.id}")
 
-            # Retrieve existing assistant and thread if IDs are already set
+            if not AssistantManager.thread_id:
+                self.create_thread()
+
             if AssistantManager.assistant_id:
                 self.assistant = self.client.beta.assistants.retrieve(
                     assistant_id=AssistantManager.assistant_id
                 )
-            if AssistantManager.thread_id:
-                self.thread = self.client.beta.threads.retrieve(
-                    thread_id=AssistantManager.thread_id
-                )
-        return
+
+            self.initialized = True
 
     def create_assistant(self, name, instructions, tools, tool_resources):
         if not self.assistant:
@@ -183,7 +183,7 @@ class AssistantManager:
             )
             AssistantManager.assistant_id = assistant_obj.id
             self.assistant = assistant_obj
-            print(f"AssisID:::: {self.assistant.id}")
+            print(f"Assistant ID: {self.assistant.id}")
 
     def create_thread(self):
         if not AssistantManager.thread_id:
@@ -191,6 +191,9 @@ class AssistantManager:
             AssistantManager.thread_id = thread_obj.id
             self.thread = thread_obj
             print(f"Created new thread with ID: {self.thread.id}")
+
+
+
 
     def add_message_to_thread(self, role, content):
         if self.thread:
@@ -206,26 +209,22 @@ class AssistantManager:
                 instructions=instructions,
             )
 
-    def upload_file(self):
-        if self.assistant:
-            # Step 1: Upload the new file
-            self.file = client.files.create(
-                file=open("data1.txt", "rb"),
-                purpose='assistants'
-            )
-            print("The file id is: ", self.file.id)
-            
-            client.beta.threads.update(thread_id=self.thread.id,tool_resources={"code_interpreter": {
-                        "file_ids": [self.file.id]
-                    }})
 
+
+            
 
 
     def process_message(self):
         if self.thread:
-            client.beta.threads.update(thread_id=self.thread.id,tool_resources={"code_interpreter": {
-                        "file_ids": [self.file.id]
-                    }})
+            if self.file:  # Ensure self.file contains a valid file ID
+                print(f"Using file with ID: {self.file}, during the message processing")  # Debugging
+                self.client.beta.threads.update(
+                    thread_id=self.thread.id,
+                    tool_resources={"code_interpreter": {"file_ids": [self.file]}}  # Use the file ID stored
+                )
+            else:
+                print("No file available to attach to the thread.")
+
             messages = self.client.beta.threads.messages.list(thread_id=self.thread.id)
             summary = []
 
@@ -236,6 +235,8 @@ class AssistantManager:
 
             self.summary = "\n".join(summary)
             print(f"SUMMARY-----> {role.capitalize()}: ==> {response}")
+
+
 
     def call_required_functions(self, required_actions):
         if not self.run:
@@ -326,10 +327,15 @@ def fetch_sql_data():
     print("The number of data rows are: ", len(df))
     df.to_csv('data1.txt', sep=',', index=False)
 
+
+import requests
+from datetime import datetime, timedelta, timezone
+
 def manage_files(api_key, new_file_path):
     """Delete old files and upload the new file."""
     # API endpoints
     list_files_url = "https://api.openai.com/v1/files"
+    api_key = st.secrets["open_api_key"]
     headers = {
         "Authorization": f"Bearer {api_key}"
     }
@@ -340,18 +346,28 @@ def manage_files(api_key, new_file_path):
         file_list = response.json().get("data", [])
         print(f"Found {len(file_list)} files.")
 
-        # Step 2: Filter files with purpose "assistants" and delete them
+        # Current time in UTC
+        now = datetime.now(timezone.utc)
+
+        # Step 2: Filter files with purpose "assistants" and delete those older than 2 hours
         for file_info in file_list:
             file_id = file_info.get("id")
-            file_purpose = file_info.get('purpose')
-            # Delete files only with the purpose "assistants"
+            file_purpose = file_info.get("purpose")
+            file_created_at = file_info.get("created_at")
+
             if file_id and file_purpose == "assistants":
-                delete_url = f"{list_files_url}/{file_id}"
-                delete_response = requests.delete(delete_url, headers=headers)
-                if delete_response.status_code == 204:
-                    print(f"Deleted file with ID: {file_id}")
-                else:
-                    print(f"Failed to delete file with ID: {file_id}, Status Code: {delete_response.status_code}")
+                # Convert the created_at timestamp to a timezone-aware datetime object
+                file_created_time = datetime.fromtimestamp(file_created_at, tz=timezone.utc)
+                print('file creation time: ', file_created_time)
+                # Check if the file is older than 10 hours
+                if now - file_created_time > timedelta(hours=10):
+                    delete_url = f"{list_files_url}/{file_id}"
+                    delete_response = requests.delete(delete_url, headers=headers)
+                    print('Delete URL', delete_url)
+                    if delete_response.status_code == 204:
+                        print(f"Deleted file with ID: {file_id}")
+                    else:
+                        print(f"Failed to delete file with ID: {file_id}, Status Code: {delete_response.status_code}")
 
         # Step 3: Upload a new file
         upload_url = "https://api.openai.com/v1/files"
@@ -359,6 +375,7 @@ def manage_files(api_key, new_file_path):
             files = {
                 "file": (new_file_path, file_to_upload, "text/plain"),
             }
+            print(files)
             data = {
                 "purpose": "assistants"  # Set the purpose to "assistants"
             }
@@ -375,6 +392,7 @@ def manage_files(api_key, new_file_path):
         print(f"Failed to retrieve file list, Status Code: {response.status_code}")
         return None
 
+
 def initialize_manager():
     """Initialize the AssistantManager and create an assistant if not already done."""
     if 'manager' not in st.session_state:
@@ -383,84 +401,91 @@ def initialize_manager():
         # Fetch latest data and create a new file
         fetch_sql_data()
 
-        # Manage files: delete old files and upload the new one
-        api_key = st.secrets["open_api_key"]
-        new_file_path = "data1.txt"
-        file_id = manage_files(api_key, new_file_path)
-        
-        # Create or update the assistant with the new file
-        if file_id:
-            if st.session_state.manager.assistant is None:
-                st.session_state.manager.create_assistant(
-                    name="News, Weather, real time information and Data Analyzer",
-                    instructions="""
-                    You are a personal assistant capable of summarizing news articles, providing weather information for any city, getting real-time information, and analyzing data from provided files.
-                    When using the code interpreter, load the data from the provided files and process it according to the user's query.
-                    """,
-                    tools=[
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": "get_news",
-                                "description": "Get the list of articles/news for the given topic",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "topic": {
-                                            "type": "string",
-                                            "description": "The topic for the news, e.g. bitcoin",
-                                        }
-                                    },
-                                    "required": ["topic"],
-                                },
-                            },
-                        },
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": "get_weather",
-                                "description": "Get the current weather information for the given city",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "city": {
-                                            "type": "string",
-                                            "description": "The name of the city for which to retrieve the weather, e.g., Calgary",
-                                        }
-                                    },
-                                    "required": ["city"],
-                                },
-                            },
-                        },
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": "google_search",
-                                "description": "Get search results for the given query including current information required",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "query": {
-                                            "type": "string",
-                                            "description": "The search query, e.g., 'Python programming language'"
-                                        }
-                                    },
-                                    "required": ["query"]
-                                }
-                            }
-                        },
-                        {
-                            "type": "code_interpreter"
-                        }
-                    ],
-                    tool_resources={"code_interpreter": {
-                        "file_ids": [file_id]
-                    }}
-                )
-            else:
-                # If assistant exists, upload file and attach to the thread
-                st.session_state.manager.upload_file()
+        # Check if the file has already been uploaded
+        if 'uploaded_file_id' not in st.session_state:
+            # Manage files: delete old files and upload the new one
+            api_key = st.secrets["open_api_key"]
+            new_file_path = "data1.txt"
+            file_id = manage_files(api_key, new_file_path)
 
+            if file_id:
+                # Store the uploaded file's ID in session state so we don't re-upload it
+                st.session_state.uploaded_file_id = file_id
+
+                # Create or update the assistant with the new file
+                if st.session_state.manager.assistant is None:
+                    st.session_state.manager.create_assistant(
+                        name="News, Weather, real time information and Data Analyzer",
+                        instructions="""
+                        You are a personal assistant capable of summarizing news articles, providing weather information for any city, getting real-time information, and analyzing data from provided files.
+                        When using the code interpreter, load the data from the provided files and process it according to the user's query.
+                        """,
+                        tools=[
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "get_news",
+                                    "description": "Get the list of articles/news for the given topic",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "topic": {
+                                                "type": "string",
+                                                "description": "The topic for the news, e.g. bitcoin",
+                                            }
+                                        },
+                                        "required": ["topic"],
+                                    },
+                                },
+                            },
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "description": "Get the current weather information for the given city",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "city": {
+                                                "type": "string",
+                                                "description": "The name of the city for which to retrieve the weather, e.g., Calgary",
+                                            }
+                                        },
+                                        "required": ["city"],
+                                    },
+                                },
+                            },
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "google_search",
+                                    "description": "Get search results for the given query including current information required",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "query": {
+                                                "type": "string",
+                                                "description": "The search query, e.g., 'Python programming language'"
+                                            }
+                                        },
+                                        "required": ["query"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "code_interpreter"
+                            }
+                        ]
+                    )
+                    print('Created new assistant')
+                else:
+                    print("Assistant already created. Skipping re-upload.")
+                    print(f"Using uploaded file with ID: {st.session_state.uploaded_file_id}")
+                    st.session_state.manager.file = file_id  # Assign file ID if the assistant already exists
+        else:
+            # Use the already uploaded file ID
+            st.session_state.manager.file = st.session_state.uploaded_file_id
+            print(f"Using previously uploaded file with ID: {st.session_state.uploaded_file_id}")
 
 
 def process_request(instructions):
@@ -547,15 +572,15 @@ def main():
                 if st.session_state.last_action == "Run User Query" and instructions:
                     st.session_state.summary = process_request(instructions)
                 elif st.session_state.last_action == "Data Summary":
-                    st.session_state.summary = process_request("Provide a summary of the data that is uploaded")
+                    st.session_state.summary = process_request("Provide a summary of the data")
                 elif st.session_state.last_action == "Optimizer":
-                    st.session_state.summary = process_request("Optimize the data from the uploaded data")
+                    st.session_state.summary = process_request("Optimize the data")
                 elif st.session_state.last_action == "Work Forecast":
-                    st.session_state.summary = process_request("Forecast the work based on data that is uploaded")
+                    st.session_state.summary = process_request("Forecast the work based on data")
                 elif st.session_state.last_action == "Negotiator":
-                    st.session_state.summary = process_request("Provide negotiation strategies based on data that is uploaded")
+                    st.session_state.summary = process_request("Provide negotiation strategies based on data")
                 elif st.session_state.last_action == "Opportunities":
-                    st.session_state.summary = process_request("Identify opportunities in the data that is uploaded")
+                    st.session_state.summary = process_request("Identify opportunities in the data")
                 
                 st.session_state.processing = False
 
