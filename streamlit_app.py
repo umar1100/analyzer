@@ -1,7 +1,7 @@
 import openai
 import pyodbc
 import os
-from dotenv import find_dotenv, load_dotenv
+#from dotenv import find_dotenv, load_dotenv
 import time
 import logging
 import pandas as pd
@@ -14,7 +14,7 @@ import requests
 from datetime import datetime, timedelta
 
 
-load_dotenv()
+#load_dotenv()
 
 news_api_key = st.secrets["news_api_key"]
 
